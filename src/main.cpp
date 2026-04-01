@@ -4,13 +4,55 @@
 #include <ESP32Servo.h>
 #include <SPI.h>
 
-constexpr int SERVO_PIN = 1;
-constexpr int TFT_CS_PIN = 43;
-constexpr int TFT_DC_PIN = 44;
-constexpr int TFT_RST_PIN = -1;
-constexpr int TFT_SCLK_PIN = 7;
-constexpr int TFT_MISO_PIN = 8;
-constexpr int TFT_MOSI_PIN = 9;
+// Board selection:
+// Keep this set to BOARD_XIAO_ESP32S3_SENSE for the current board.
+// Switch to BOARD_XIAO_ESP32S3_PLUS later and only update the pin map below.
+#define BOARD_XIAO_ESP32S3_SENSE 1
+#define BOARD_XIAO_ESP32S3_PLUS  2
+#define TARGET_BOARD BOARD_XIAO_ESP32S3_SENSE
+
+struct BoardPins {
+    int servoPin;
+    int tftCsPin;
+    int tftDcPin;
+    int tftRstPin;
+    int tftSclkPin;
+    int tftMisoPin;
+    int tftMosiPin;
+    int uartRxPin;
+    int uartTxPin;
+    const char *boardName;
+};
+
+#if TARGET_BOARD == BOARD_XIAO_ESP32S3_SENSE
+constexpr BoardPins PINS = {
+    1,   // servoPin
+    43,  // tftCsPin
+    44,  // tftDcPin
+    -1,  // tftRstPin
+    7,   // tftSclkPin
+    8,   // tftMisoPin
+    9,   // tftMosiPin
+    44,  // uartRxPin
+    43,  // uartTxPin
+    "XIAO ESP32S3 Sense"
+};
+#elif TARGET_BOARD == BOARD_XIAO_ESP32S3_PLUS
+constexpr BoardPins PINS = {
+    1,   // servoPin
+    43,  // tftCsPin
+    44,  // tftDcPin
+    -1,  // tftRstPin
+    7,   // tftSclkPin
+    8,   // tftMisoPin
+    9,   // tftMosiPin
+    44,  // uartRxPin
+    43,  // uartTxPin
+    "XIAO ESP32S3 Plus"
+};
+#else
+#error "Unsupported TARGET_BOARD value"
+#endif
 
 constexpr int CENTER_ANGLE = 90;
 constexpr int LEFT_ANGLE = 60;
@@ -28,7 +70,7 @@ constexpr int DETAIL_X = MENU_W;
 constexpr int DETAIL_W = SCREEN_W - MENU_W;
 
 Servo myServo;
-Adafruit_ST7735 tft(TFT_CS_PIN, TFT_DC_PIN, TFT_RST_PIN);
+Adafruit_ST7735 tft(PINS.tftCsPin, PINS.tftDcPin, PINS.tftRstPin);
 
 enum class ServoPhase {
     Idle,
@@ -531,14 +573,16 @@ void setup() {
     Serial.begin(115200);
     delay(1000);
     Serial.println("Gesture order menu start");
+    Serial.print("Target board: ");
+    Serial.println(PINS.boardName);
     Serial.println("Type rock / paper / scissors in Serial Monitor to test.");
 
     myServo.setPeriodHertz(50);
-    myServo.attach(SERVO_PIN, 500, 2400);
+    myServo.attach(PINS.servoPin, 500, 2400);
     myServo.write(CENTER_ANGLE);
     currentServoAngle = CENTER_ANGLE;
 
-    SPI.begin(TFT_SCLK_PIN, TFT_MISO_PIN, TFT_MOSI_PIN, TFT_CS_PIN);
+    SPI.begin(PINS.tftSclkPin, PINS.tftMisoPin, PINS.tftMosiPin, PINS.tftCsPin);
     tft.initR(INITR_BLACKTAB);
     renderCurrentView();
 
