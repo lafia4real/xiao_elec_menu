@@ -4,25 +4,6 @@
 #include <ESP32Servo.h>
 #include <SPI.h>
 
-// Wiring summary for XIAO ESP32S3 Sense
-// Servo signal -> GPIO1
-//
-// TFT 1.8 inch 128x160 SPI (common ST7735/ST7735S)
-// TFT VCC  -> 3V3
-// TFT GND  -> GND
-// TFT SCK  -> GPIO7   (D8)
-// TFT MISO -> GPIO8   (D9, optional)
-// TFT MOSI -> GPIO9   (D10)
-// TFT CS   -> GPIO43  (D6)
-// TFT DC   -> GPIO44  (D7)
-// TFT RST  -> XIAO RST pin or 3V3
-//
-// Note:
-// XIAO ESP32S3 does not expose a convenient GPIO12 on the normal header pins.
-// For the TFT reset line, the simplest stable approach is to hard-wire the TFT
-// RST pin to the board RST pin (preferred) or 3V3, and let the library skip
-// software reset control by using -1 here.
-
 constexpr int SERVO_PIN = 1;
 constexpr int TFT_CS_PIN = 43;
 constexpr int TFT_DC_PIN = 44;
@@ -38,11 +19,19 @@ constexpr uint32_t SERVO_STEP_INTERVAL_MS = 15;
 constexpr uint32_t HOLD_LEFT_MS = 800;
 constexpr uint32_t HOLD_RIGHT_MS = 800;
 constexpr uint32_t HOLD_CENTER_MS = 1000;
+constexpr uint32_t GESTURE_COOLDOWN_MS = 700;
+
+constexpr int SCREEN_W = 128;
+constexpr int SCREEN_H = 160;
+constexpr int MENU_W = 42;
+constexpr int DETAIL_X = MENU_W;
+constexpr int DETAIL_W = SCREEN_W - MENU_W;
 
 Servo myServo;
 Adafruit_ST7735 tft(TFT_CS_PIN, TFT_DC_PIN, TFT_RST_PIN);
 
 enum class ServoPhase {
+    Idle,
     MoveToLeft,
     HoldLeft,
     MoveToRight,
@@ -51,38 +40,259 @@ enum class ServoPhase {
     HoldCenter,
 };
 
-enum class TftPage {
-    Startup,
-    ColorBars,
-    Geometry,
-    Text,
-    Rotation0,
-    Rotation1,
-    Rotation2,
-    Rotation3,
-    Final,
+enum class Gesture {
+    None,
+    Rock,
+    Paper,
+    Scissors,
 };
 
-ServoPhase servoPhase = ServoPhase::MoveToLeft;
-TftPage currentTftPage = TftPage::Startup;
+enum class AppView {
+    Menu,
+    Detail,
+};
+
+struct Dish {
+    const char *name;
+    const char *subtitle;
+};
+
+const Dish DISHES[] = {
+    {"Baozi", "steamed"},
+    {"Jiaozi", "dumpling"},
+    {"Noodles", "beef"},
+    {"Mapo", "tofu"},
+    {"Burger", "beef"},
+    {"Pizza", "cheese"}
+};
+constexpr size_t DISH_COUNT = sizeof(DISHES) / sizeof(DISHES[0]);
+
+ServoPhase servoPhase = ServoPhase::Idle;
 int currentServoAngle = CENTER_ANGLE;
 uint32_t lastServoStepMs = 0;
 uint32_t servoPhaseStartMs = 0;
-uint32_t tftPageStartMs = 0;
 
-void centerText(const String &text, int y, uint16_t color, uint8_t textSize) {
-    int16_t x1 = 0;
-    int16_t y1 = 0;
-    uint16_t w = 0;
-    uint16_t h = 0;
+AppView currentView = AppView::Menu;
+size_t currentDishIndex = 0;
+Gesture lastGesture = Gesture::None;
+uint32_t lastGestureHandledMs = 0;
+String serialBuffer;
 
-    tft.setTextSize(textSize);
-    tft.getTextBounds(text, 0, y, &x1, &y1, &w, &h);
-    int16_t x = (tft.width() - w) / 2;
+void fillPixel(int originX, int originY, int gx, int gy, int size, uint16_t color) {
+    tft.fillRect(originX + gx * size, originY + gy * size, size - 1, size - 1, color);
+}
 
-    tft.setCursor(x, y);
-    tft.setTextColor(color);
-    tft.print(text);
+void drawPixelArtBaozi(int originX, int originY, int s) {
+    fillPixel(originX, originY, 3, 1, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 4, 1, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 2, 2, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 3, 2, s, ST77XX_WHITE);
+    fillPixel(originX, originY, 4, 2, s, ST77XX_WHITE);
+    fillPixel(originX, originY, 5, 2, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 1, 3, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 2, 3, s, ST77XX_WHITE);
+    fillPixel(originX, originY, 3, 3, s, ST77XX_WHITE);
+    fillPixel(originX, originY, 4, 3, s, ST77XX_WHITE);
+    fillPixel(originX, originY, 5, 3, s, ST77XX_WHITE);
+    fillPixel(originX, originY, 6, 3, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 2, 4, s, ST77XX_WHITE);
+    fillPixel(originX, originY, 3, 4, s, 0xC618);
+    fillPixel(originX, originY, 4, 4, s, 0xC618);
+    fillPixel(originX, originY, 5, 4, s, ST77XX_WHITE);
+    fillPixel(originX, originY, 2, 5, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 3, 5, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 4, 5, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 5, 5, s, ST77XX_BLACK);
+}
+
+void drawPixelArtJiaozi(int originX, int originY, int s) {
+    fillPixel(originX, originY, 2, 2, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 3, 2, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 4, 2, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 5, 2, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 1, 3, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 2, 3, s, ST77XX_WHITE);
+    fillPixel(originX, originY, 3, 3, s, ST77XX_WHITE);
+    fillPixel(originX, originY, 4, 3, s, ST77XX_WHITE);
+    fillPixel(originX, originY, 5, 3, s, ST77XX_WHITE);
+    fillPixel(originX, originY, 6, 3, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 2, 4, s, ST77XX_WHITE);
+    fillPixel(originX, originY, 3, 4, s, 0xC618);
+    fillPixel(originX, originY, 4, 4, s, 0xC618);
+    fillPixel(originX, originY, 5, 4, s, ST77XX_WHITE);
+    fillPixel(originX, originY, 3, 5, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 4, 5, s, ST77XX_BLACK);
+}
+
+void drawPixelArtNoodles(int originX, int originY, int s) {
+    fillPixel(originX, originY, 2, 2, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 3, 2, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 4, 2, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 5, 2, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 6, 2, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 2, 3, s, 0xFD20);
+    fillPixel(originX, originY, 3, 3, s, 0xFD20);
+    fillPixel(originX, originY, 4, 3, s, 0xFD20);
+    fillPixel(originX, originY, 5, 3, s, 0xFD20);
+    fillPixel(originX, originY, 6, 3, s, 0xFD20);
+    fillPixel(originX, originY, 2, 4, s, 0xFD20);
+    fillPixel(originX, originY, 3, 4, s, ST77XX_YELLOW);
+    fillPixel(originX, originY, 4, 4, s, ST77XX_YELLOW);
+    fillPixel(originX, originY, 5, 4, s, 0xA145);
+    fillPixel(originX, originY, 6, 4, s, 0xFD20);
+    fillPixel(originX, originY, 2, 5, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 3, 5, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 4, 5, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 5, 5, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 6, 5, s, ST77XX_BLACK);
+}
+
+void drawPixelArtMapo(int originX, int originY, int s) {
+    fillPixel(originX, originY, 2, 2, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 3, 2, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 4, 2, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 5, 2, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 6, 2, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 2, 3, s, ST77XX_RED);
+    fillPixel(originX, originY, 3, 3, s, ST77XX_WHITE);
+    fillPixel(originX, originY, 4, 3, s, ST77XX_RED);
+    fillPixel(originX, originY, 5, 3, s, ST77XX_WHITE);
+    fillPixel(originX, originY, 6, 3, s, ST77XX_RED);
+    fillPixel(originX, originY, 2, 4, s, ST77XX_RED);
+    fillPixel(originX, originY, 3, 4, s, ST77XX_GREEN);
+    fillPixel(originX, originY, 4, 4, s, ST77XX_WHITE);
+    fillPixel(originX, originY, 5, 4, s, ST77XX_GREEN);
+    fillPixel(originX, originY, 6, 4, s, ST77XX_RED);
+    fillPixel(originX, originY, 2, 5, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 3, 5, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 4, 5, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 5, 5, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 6, 5, s, ST77XX_BLACK);
+}
+
+void drawPixelArtBurger(int originX, int originY, int s) {
+    fillPixel(originX, originY, 3, 1, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 4, 1, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 5, 1, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 2, 2, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 3, 2, s, 0xD34A);
+    fillPixel(originX, originY, 4, 2, s, 0xD34A);
+    fillPixel(originX, originY, 5, 2, s, 0xD34A);
+    fillPixel(originX, originY, 6, 2, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 2, 3, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 3, 3, s, 0xD34A);
+    fillPixel(originX, originY, 4, 3, s, 0xD34A);
+    fillPixel(originX, originY, 5, 3, s, 0xD34A);
+    fillPixel(originX, originY, 6, 3, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 2, 4, s, 0x07E0);
+    fillPixel(originX, originY, 3, 4, s, 0x07E0);
+    fillPixel(originX, originY, 4, 4, s, 0x07E0);
+    fillPixel(originX, originY, 5, 4, s, 0x07E0);
+    fillPixel(originX, originY, 6, 4, s, 0x07E0);
+    fillPixel(originX, originY, 2, 5, s, 0xA145);
+    fillPixel(originX, originY, 3, 5, s, 0xA145);
+    fillPixel(originX, originY, 4, 5, s, 0xA145);
+    fillPixel(originX, originY, 5, 5, s, 0xA145);
+    fillPixel(originX, originY, 6, 5, s, 0xA145);
+    fillPixel(originX, originY, 2, 6, s, ST77XX_YELLOW);
+    fillPixel(originX, originY, 3, 6, s, ST77XX_YELLOW);
+    fillPixel(originX, originY, 4, 6, s, ST77XX_YELLOW);
+    fillPixel(originX, originY, 5, 6, s, ST77XX_YELLOW);
+    fillPixel(originX, originY, 6, 6, s, ST77XX_YELLOW);
+    fillPixel(originX, originY, 2, 7, s, 0xD34A);
+    fillPixel(originX, originY, 3, 7, s, 0xD34A);
+    fillPixel(originX, originY, 4, 7, s, 0xD34A);
+    fillPixel(originX, originY, 5, 7, s, 0xD34A);
+    fillPixel(originX, originY, 6, 7, s, 0xD34A);
+}
+
+void drawPixelArtPizza(int originX, int originY, int s) {
+    fillPixel(originX, originY, 4, 1, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 3, 2, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 4, 2, s, ST77XX_YELLOW);
+    fillPixel(originX, originY, 5, 2, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 2, 3, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 3, 3, s, ST77XX_RED);
+    fillPixel(originX, originY, 4, 3, s, ST77XX_RED);
+    fillPixel(originX, originY, 5, 3, s, ST77XX_RED);
+    fillPixel(originX, originY, 6, 3, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 1, 4, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 2, 4, s, ST77XX_YELLOW);
+    fillPixel(originX, originY, 3, 4, s, ST77XX_RED);
+    fillPixel(originX, originY, 4, 4, s, ST77XX_RED);
+    fillPixel(originX, originY, 5, 4, s, ST77XX_RED);
+    fillPixel(originX, originY, 6, 4, s, ST77XX_YELLOW);
+    fillPixel(originX, originY, 7, 4, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 2, 5, s, 0xD34A);
+    fillPixel(originX, originY, 3, 5, s, 0xD34A);
+    fillPixel(originX, originY, 4, 5, s, 0xD34A);
+    fillPixel(originX, originY, 5, 5, s, 0xD34A);
+    fillPixel(originX, originY, 6, 5, s, 0xD34A);
+    fillPixel(originX, originY, 3, 6, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 4, 6, s, ST77XX_BLACK);
+    fillPixel(originX, originY, 5, 6, s, ST77XX_BLACK);
+}
+
+void drawDishPixelArt(size_t dishIndex, int originX, int originY, int pixelSize) {
+    switch (dishIndex) {
+        case 0:
+            drawPixelArtBaozi(originX, originY, pixelSize);
+            break;
+        case 1:
+            drawPixelArtJiaozi(originX, originY, pixelSize);
+            break;
+        case 2:
+            drawPixelArtNoodles(originX, originY, pixelSize);
+            break;
+        case 3:
+            drawPixelArtMapo(originX, originY, pixelSize);
+            break;
+        case 4:
+            drawPixelArtBurger(originX, originY, pixelSize);
+            break;
+        case 5:
+            drawPixelArtPizza(originX, originY, pixelSize);
+            break;
+        default:
+            drawPixelArtBaozi(originX, originY, pixelSize);
+            break;
+    }
+}
+
+const char *gestureToString(Gesture gesture) {
+    switch (gesture) {
+        case Gesture::Rock:
+            return "ROCK";
+        case Gesture::Paper:
+            return "PAPER";
+        case Gesture::Scissors:
+            return "SCISSORS";
+        case Gesture::None:
+        default:
+            return "NONE";
+    }
+}
+
+String normalizeLabel(String label) {
+    label.trim();
+    label.toLowerCase();
+    return label;
+}
+
+Gesture parseGestureLabel(const String &rawLabel) {
+    String label = normalizeLabel(rawLabel);
+
+    if (label == "rock" || label == "stone") {
+        return Gesture::Rock;
+    }
+    if (label == "paper") {
+        return Gesture::Paper;
+    }
+    if (label == "scissors" || label == "scissor") {
+        return Gesture::Scissors;
+    }
+
+    return Gesture::None;
 }
 
 void enterServoPhase(ServoPhase nextPhase, uint32_t nowMs) {
@@ -93,22 +303,31 @@ void enterServoPhase(ServoPhase nextPhase, uint32_t nowMs) {
         case ServoPhase::MoveToLeft:
             Serial.println("Move to 60 deg");
             break;
-        case ServoPhase::HoldLeft:
-            break;
         case ServoPhase::MoveToRight:
             Serial.println("Move to 120 deg");
-            break;
-        case ServoPhase::HoldRight:
             break;
         case ServoPhase::MoveToCenter:
             Serial.println("Back to center");
             break;
+        case ServoPhase::Idle:
+        case ServoPhase::HoldLeft:
+        case ServoPhase::HoldRight:
         case ServoPhase::HoldCenter:
             break;
     }
 }
 
+void startServoSequence(uint32_t nowMs) {
+    currentServoAngle = CENTER_ANGLE;
+    myServo.write(currentServoAngle);
+    lastServoStepMs = nowMs;
+    enterServoPhase(ServoPhase::MoveToLeft, nowMs);
+}
+
 void updateServo(uint32_t nowMs) {
+    if (servoPhase == ServoPhase::Idle) {
+        return;
+    }
     if (nowMs - lastServoStepMs < SERVO_STEP_INTERVAL_MS) {
         return;
     }
@@ -160,197 +379,159 @@ void updateServo(uint32_t nowMs) {
 
         case ServoPhase::HoldCenter:
             if (nowMs - servoPhaseStartMs >= HOLD_CENTER_MS) {
-                enterServoPhase(ServoPhase::MoveToLeft, nowMs);
+                enterServoPhase(ServoPhase::Idle, nowMs);
             }
             break;
+
+        case ServoPhase::Idle:
+            break;
     }
 }
 
-void renderStartupScreen() {
-    tft.setRotation(0);
-    tft.fillScreen(ST77XX_BLACK);
-    centerText("XIAO ESP32S3", 16, ST77XX_WHITE, 2);
-    centerText("SERVO + TFT", 46, ST77XX_YELLOW, 2);
-    centerText("128 x 160", 80, ST77XX_CYAN, 2);
-    centerText("ST7735", 112, ST77XX_GREEN, 2);
+void drawMenuList() {
+    tft.fillRect(0, 0, MENU_W, SCREEN_H, ST77XX_WHITE);
+    tft.drawFastVLine(MENU_W - 1, 0, SCREEN_H, ST77XX_BLACK);
+    tft.setTextSize(1);
+
+    for (size_t i = 0; i < DISH_COUNT; ++i) {
+        int y = 10 + static_cast<int>(i) * 24;
+        uint16_t itemBg = (i == currentDishIndex) ? ST77XX_BLACK : ST77XX_WHITE;
+        uint16_t itemFg = (i == currentDishIndex) ? ST77XX_WHITE : ST77XX_BLACK;
+
+        tft.fillRoundRect(3, y, MENU_W - 6, 18, 3, itemBg);
+        tft.setCursor(6, y + 5);
+        tft.setTextColor(itemFg);
+        tft.print(DISHES[i].name);
+    }
 }
 
-void renderColorBars() {
-    tft.setRotation(0);
-    const uint16_t colors[] = {
-        ST77XX_RED, ST77XX_GREEN, ST77XX_BLUE,
-        ST77XX_CYAN, ST77XX_MAGENTA, ST77XX_YELLOW,
-        ST77XX_WHITE, ST77XX_BLACK
-    };
-
-    tft.fillScreen(ST77XX_BLACK);
-    int16_t barHeight = tft.height() / 8;
-    for (int i = 0; i < 8; ++i) {
-        tft.fillRect(0, i * barHeight, tft.width(), barHeight, colors[i]);
-    }
-    tft.drawRect(0, 0, tft.width(), tft.height(), ST77XX_WHITE);
+void drawDetailFrame() {
+    tft.fillRect(DETAIL_X, 0, DETAIL_W, SCREEN_H, ST77XX_WHITE);
+    tft.drawRect(DETAIL_X + 3, 3, DETAIL_W - 6, SCREEN_H - 6, ST77XX_BLACK);
 }
 
-void renderGeometryTest() {
-    tft.setRotation(0);
-    tft.fillScreen(ST77XX_BLACK);
+void renderMenuView() {
+    drawMenuList();
+    drawDetailFrame();
 
-    for (int16_t i = 0; i < tft.width(); i += 12) {
-        tft.drawLine(0, 0, i, tft.height() - 1, ST77XX_RED);
-        tft.drawLine(tft.width() - 1, tft.height() - 1, i, 0, ST77XX_BLUE);
-    }
+    tft.setTextSize(1);
+    tft.setTextColor(ST77XX_BLACK);
+    tft.setCursor(DETAIL_X + 8, 10);
+    tft.print(DISHES[currentDishIndex].name);
 
-    for (int16_t i = 0; i < tft.height(); i += 12) {
-        tft.drawLine(0, tft.height() - 1, tft.width() - 1, i, ST77XX_GREEN);
-        tft.drawLine(tft.width() - 1, 0, 0, i, ST77XX_YELLOW);
-    }
+    tft.setCursor(DETAIL_X + 8, 118);
+    tft.print(DISHES[currentDishIndex].subtitle);
 
-    tft.fillCircle(tft.width() / 2, tft.height() / 2, 18, ST77XX_MAGENTA);
-    tft.drawCircle(tft.width() / 2, tft.height() / 2, 34, ST77XX_WHITE);
+    tft.setCursor(DETAIL_X + 8, 132);
+    tft.print("R up  P down");
+    tft.setCursor(DETAIL_X + 8, 146);
+    tft.print("S open");
+
+    drawDishPixelArt(currentDishIndex, DETAIL_X + 18, 30, 6);
 }
 
-void renderTextTest() {
-    tft.setRotation(0);
-    tft.fillScreen(ST77XX_BLUE);
-    tft.setTextWrap(false);
-
+void renderDetailView() {
+    tft.fillScreen(ST77XX_WHITE);
+    tft.setTextColor(ST77XX_BLACK);
+    tft.setTextSize(2);
     tft.setCursor(8, 10);
-    tft.setTextColor(ST77XX_WHITE);
+    tft.print(DISHES[currentDishIndex].name);
+
+    drawDishPixelArt(currentDishIndex, 16, 44, 10);
+
     tft.setTextSize(1);
-    tft.println("Text test:");
-
-    tft.setCursor(8, 30);
-    tft.setTextColor(ST77XX_YELLOW);
-    tft.setTextSize(2);
-    tft.println("Hello");
-
-    tft.setCursor(8, 60);
-    tft.setTextColor(ST77XX_CYAN);
-    tft.setTextSize(2);
-    tft.println("TFT LCD");
-
-    tft.setCursor(8, 95);
-    tft.setTextColor(ST77XX_GREEN);
-    tft.setTextSize(1);
-    tft.println("Servo still running");
-
-    tft.setCursor(8, 115);
-    tft.setTextColor(ST77XX_MAGENTA);
-    tft.println("Rotation test next");
+    tft.setCursor(8, 136);
+    tft.print(DISHES[currentDishIndex].subtitle);
+    tft.setCursor(8, 148);
+    tft.print("Scissors back");
 }
 
-void renderRotationPage(uint8_t rotation) {
-    tft.setRotation(rotation);
-    tft.fillScreen(ST77XX_BLACK);
-    tft.drawRect(0, 0, tft.width(), tft.height(), ST77XX_WHITE);
-    centerText("Rotation", 22, ST77XX_YELLOW, 2);
-    centerText(String(rotation), 64, ST77XX_GREEN, 4);
-    centerText(String(tft.width()) + "x" + String(tft.height()), 120, ST77XX_CYAN, 1);
-}
-
-void renderFinalScreen() {
+void renderCurrentView() {
     tft.setRotation(0);
-    tft.fillScreen(ST77XX_BLACK);
-    centerText("Display OK", 24, ST77XX_GREEN, 2);
-    centerText("Servo on GPIO1", 62, ST77XX_WHITE, 1);
-    centerText("GPIO2~6 reserved", 78, ST77XX_WHITE, 1);
-    centerText("TFT on 7/8/9/43/44", 94, ST77XX_CYAN, 1);
-}
-
-void renderTftPage(TftPage page) {
-    switch (page) {
-        case TftPage::Startup:
-            renderStartupScreen();
-            break;
-        case TftPage::ColorBars:
-            renderColorBars();
-            break;
-        case TftPage::Geometry:
-            renderGeometryTest();
-            break;
-        case TftPage::Text:
-            renderTextTest();
-            break;
-        case TftPage::Rotation0:
-            renderRotationPage(0);
-            break;
-        case TftPage::Rotation1:
-            renderRotationPage(1);
-            break;
-        case TftPage::Rotation2:
-            renderRotationPage(2);
-            break;
-        case TftPage::Rotation3:
-            renderRotationPage(3);
-            break;
-        case TftPage::Final:
-            renderFinalScreen();
-            break;
+    if (currentView == AppView::Menu) {
+        renderMenuView();
+    } else {
+        renderDetailView();
     }
 }
 
-uint32_t pageDurationMs(TftPage page) {
-    switch (page) {
-        case TftPage::Startup:
-            return 1800;
-        case TftPage::ColorBars:
-            return 1600;
-        case TftPage::Geometry:
-            return 1800;
-        case TftPage::Text:
-            return 1800;
-        case TftPage::Rotation0:
-        case TftPage::Rotation1:
-        case TftPage::Rotation2:
-        case TftPage::Rotation3:
-            return 1200;
-        case TftPage::Final:
-            return 2500;
-    }
-
-    return 1500;
-}
-
-TftPage nextPage(TftPage page) {
-    switch (page) {
-        case TftPage::Startup:
-            return TftPage::ColorBars;
-        case TftPage::ColorBars:
-            return TftPage::Geometry;
-        case TftPage::Geometry:
-            return TftPage::Text;
-        case TftPage::Text:
-            return TftPage::Rotation0;
-        case TftPage::Rotation0:
-            return TftPage::Rotation1;
-        case TftPage::Rotation1:
-            return TftPage::Rotation2;
-        case TftPage::Rotation2:
-            return TftPage::Rotation3;
-        case TftPage::Rotation3:
-            return TftPage::Final;
-        case TftPage::Final:
-            return TftPage::ColorBars;
-    }
-
-    return TftPage::ColorBars;
-}
-
-void updateTft(uint32_t nowMs) {
-    if (nowMs - tftPageStartMs < pageDurationMs(currentTftPage)) {
+void applyGestureToUi(Gesture gesture) {
+    if (gesture == Gesture::None) {
         return;
     }
 
-    currentTftPage = nextPage(currentTftPage);
-    tftPageStartMs = nowMs;
-    renderTftPage(currentTftPage);
+    lastGesture = gesture;
+    Serial.print("Gesture detected: ");
+    Serial.println(gestureToString(gesture));
+
+    if (currentView == AppView::Menu) {
+        if (gesture == Gesture::Rock) {
+            currentDishIndex = (currentDishIndex + DISH_COUNT - 1) % DISH_COUNT;
+        } else if (gesture == Gesture::Paper) {
+            currentDishIndex = (currentDishIndex + 1) % DISH_COUNT;
+        } else if (gesture == Gesture::Scissors) {
+            currentView = AppView::Detail;
+            startServoSequence(millis());
+        }
+    } else if (gesture == Gesture::Scissors) {
+        currentView = AppView::Menu;
+    }
+
+    renderCurrentView();
+}
+
+Gesture pollGestureFromSerial() {
+    while (Serial.available() > 0) {
+        char ch = static_cast<char>(Serial.read());
+
+        if (ch == '\r') {
+            continue;
+        }
+        if (ch == '\n') {
+            Gesture gesture = parseGestureLabel(serialBuffer);
+            serialBuffer = "";
+            return gesture;
+        }
+
+        serialBuffer += ch;
+    }
+
+    return Gesture::None;
+}
+
+void updateGestureInput(uint32_t nowMs) {
+    Gesture gesture = pollGestureFromSerial();
+    if (gesture == Gesture::None) {
+        return;
+    }
+    if (nowMs - lastGestureHandledMs < GESTURE_COOLDOWN_MS) {
+        return;
+    }
+
+    lastGestureHandledMs = nowMs;
+    applyGestureToUi(gesture);
+}
+
+void onGestureRecognized(const String &label) {
+    Gesture gesture = parseGestureLabel(label);
+    uint32_t nowMs = millis();
+
+    if (gesture == Gesture::None) {
+        return;
+    }
+    if (nowMs - lastGestureHandledMs < GESTURE_COOLDOWN_MS) {
+        return;
+    }
+
+    lastGestureHandledMs = nowMs;
+    applyGestureToUi(gesture);
 }
 
 void setup() {
     Serial.begin(115200);
     delay(1000);
-    Serial.println("Servo + TFT test start");
-    Serial.println("TFT RST is hard-wired, software reset pin disabled");
+    Serial.println("Gesture order menu start");
+    Serial.println("Type rock / paper / scissors in Serial Monitor to test.");
 
     myServo.setPeriodHertz(50);
     myServo.attach(SERVO_PIN, 500, 2400);
@@ -358,23 +539,16 @@ void setup() {
     currentServoAngle = CENTER_ANGLE;
 
     SPI.begin(TFT_SCLK_PIN, TFT_MISO_PIN, TFT_MOSI_PIN, TFT_CS_PIN);
-
-    // Most 1.8 inch 128x160 modules use INITR_BLACKTAB.
-    // If you still get a white screen or wrong colors, try INITR_GREENTAB
-    // and then INITR_REDTAB.
     tft.initR(INITR_BLACKTAB);
-    renderTftPage(currentTftPage);
+    renderCurrentView();
 
     uint32_t nowMs = millis();
     lastServoStepMs = nowMs;
     servoPhaseStartMs = nowMs;
-    tftPageStartMs = nowMs;
-
-    enterServoPhase(ServoPhase::MoveToLeft, nowMs);
 }
 
 void loop() {
     uint32_t nowMs = millis();
     updateServo(nowMs);
-    updateTft(nowMs);
+    updateGestureInput(nowMs);
 }
