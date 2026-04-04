@@ -8,7 +8,7 @@
 // Switch to BOARD_XIAO_ESP32S3_PLUS later and only update the pin map below.
 #define BOARD_XIAO_ESP32S3_SENSE 1
 #define BOARD_XIAO_ESP32S3_PLUS  2
-#define TARGET_BOARD BOARD_XIAO_ESP32S3_SENSE
+#define TARGET_BOARD BOARD_XIAO_ESP32S3_PLUS
 
 struct BoardPins {
     int servoPin;
@@ -41,7 +41,7 @@ constexpr BoardPins PINS = {
     1,
     43,
     44,
-    -1,
+    8,
     7,
     8,
     9,
