@@ -1,129 +1,85 @@
 #include "servo.h"
 
-#include <ESP32Servo.h>
-
 #include "board_config.h"
 
 namespace {
 
-enum class ServoPhase {
+constexpr uint32_t ATOMIZER_ON_MS = 5000;
+constexpr uint32_t ATOMIZER_PULSE_MS = 200;
+constexpr uint32_t ATOMIZER_GAP_MS = 200;
+
+enum class AtomizerPhase {
     Idle,
-    MoveToLeft,
-    HoldLeft,
-    MoveToRight,
-    HoldRight,
-    MoveToCenter,
-    HoldCenter,
+    PulseOnLow,
+    PulseOnHigh,
+    HoldOn,
+    PulseOffLow,
+    PulseOffHigh,
 };
 
-Servo g_servo;
-ServoPhase g_phase = ServoPhase::Idle;
-int g_currentAngle = CENTER_ANGLE;
-uint32_t g_lastStepMs = 0;
+AtomizerPhase g_atomizerPhase = AtomizerPhase::Idle;
 uint32_t g_phaseStartMs = 0;
-
-void enterPhase(ServoPhase nextPhase, uint32_t nowMs) {
-    g_phase = nextPhase;
-    g_phaseStartMs = nowMs;
-
-    switch (g_phase) {
-        case ServoPhase::MoveToLeft:
-            Serial.println("Move to 60 deg");
-            break;
-        case ServoPhase::MoveToRight:
-            Serial.println("Move to 120 deg");
-            break;
-        case ServoPhase::MoveToCenter:
-            Serial.println("Back to center");
-            break;
-        case ServoPhase::Idle:
-        case ServoPhase::HoldLeft:
-        case ServoPhase::HoldRight:
-        case ServoPhase::HoldCenter:
-            break;
-    }
-}
 
 }  // namespace
 
 void servoSetup() {
-    g_servo.setPeriodHertz(50);
-    g_servo.attach(PINS.servoPin, 500, 2400);
-    g_servo.write(CENTER_ANGLE);
-    g_currentAngle = CENTER_ANGLE;
-
-    uint32_t nowMs = millis();
-    g_lastStepMs = nowMs;
-    g_phaseStartMs = nowMs;
+    pinMode(PINS.servoPin, OUTPUT);
+    digitalWrite(PINS.servoPin, HIGH);
 }
 
 void servoStartSequence(uint32_t nowMs) {
-    g_currentAngle = CENTER_ANGLE;
-    g_servo.write(g_currentAngle);
-    g_lastStepMs = nowMs;
-    enterPhase(ServoPhase::MoveToLeft, nowMs);
+    g_atomizerPhase = AtomizerPhase::PulseOnLow;
+    g_phaseStartMs = nowMs;
+    digitalWrite(PINS.servoPin, LOW);
+    Serial.println("Atomizer press ON");
 }
 
 void servoUpdate(uint32_t nowMs) {
-    if (g_phase == ServoPhase::Idle) {
-        return;
-    }
-    if (nowMs - g_lastStepMs < SERVO_STEP_INTERVAL_MS) {
-        return;
-    }
+    switch (g_atomizerPhase) {
+        case AtomizerPhase::Idle:
+            return;
 
-    g_lastStepMs = nowMs;
-
-    switch (g_phase) {
-        case ServoPhase::MoveToLeft:
-            if (g_currentAngle > LEFT_ANGLE) {
-                g_currentAngle--;
-                g_servo.write(g_currentAngle);
-            } else {
-                enterPhase(ServoPhase::HoldLeft, nowMs);
+        case AtomizerPhase::PulseOnLow:
+            if (nowMs - g_phaseStartMs >= ATOMIZER_PULSE_MS) {
+                digitalWrite(PINS.servoPin, HIGH);
+                g_atomizerPhase = AtomizerPhase::PulseOnHigh;
+                g_phaseStartMs = nowMs;
+                Serial.println("Atomizer release ON");
             }
             break;
 
-        case ServoPhase::HoldLeft:
-            if (nowMs - g_phaseStartMs >= HOLD_LEFT_MS) {
-                enterPhase(ServoPhase::MoveToRight, nowMs);
+        case AtomizerPhase::PulseOnHigh:
+            if (nowMs - g_phaseStartMs >= ATOMIZER_GAP_MS) {
+                g_atomizerPhase = AtomizerPhase::HoldOn;
+                g_phaseStartMs = nowMs;
+                Serial.println("Atomizer hold ON for 5 seconds");
             }
             break;
 
-        case ServoPhase::MoveToRight:
-            if (g_currentAngle < RIGHT_ANGLE) {
-                g_currentAngle++;
-                g_servo.write(g_currentAngle);
-            } else {
-                enterPhase(ServoPhase::HoldRight, nowMs);
+        case AtomizerPhase::HoldOn:
+            if (nowMs - g_phaseStartMs >= ATOMIZER_ON_MS) {
+                digitalWrite(PINS.servoPin, LOW);
+                g_atomizerPhase = AtomizerPhase::PulseOffLow;
+                g_phaseStartMs = nowMs;
+                Serial.println("Atomizer press OFF");
             }
             break;
 
-        case ServoPhase::HoldRight:
-            if (nowMs - g_phaseStartMs >= HOLD_RIGHT_MS) {
-                enterPhase(ServoPhase::MoveToCenter, nowMs);
+        case AtomizerPhase::PulseOffLow:
+            if (nowMs - g_phaseStartMs >= ATOMIZER_PULSE_MS) {
+                digitalWrite(PINS.servoPin, HIGH);
+                g_atomizerPhase = AtomizerPhase::PulseOffHigh;
+                g_phaseStartMs = nowMs;
+                Serial.println("Atomizer release OFF");
             }
             break;
 
-        case ServoPhase::MoveToCenter:
-            if (g_currentAngle > CENTER_ANGLE) {
-                g_currentAngle--;
-                g_servo.write(g_currentAngle);
-            } else if (g_currentAngle < CENTER_ANGLE) {
-                g_currentAngle++;
-                g_servo.write(g_currentAngle);
-            } else {
-                enterPhase(ServoPhase::HoldCenter, nowMs);
+        case AtomizerPhase::PulseOffHigh:
+            if (nowMs - g_phaseStartMs >= ATOMIZER_GAP_MS) {
+                g_atomizerPhase = AtomizerPhase::Idle;
+                g_phaseStartMs = nowMs;
+                Serial.println("Atomizer idle HIGH");
             }
-            break;
-
-        case ServoPhase::HoldCenter:
-            if (nowMs - g_phaseStartMs >= HOLD_CENTER_MS) {
-                enterPhase(ServoPhase::Idle, nowMs);
-            }
-            break;
-
-        case ServoPhase::Idle:
             break;
     }
 }

@@ -28,7 +28,7 @@ constexpr BoardPins PINS = {
     1,
     43,
     44,
-    -1,
+    8,
     7,
     8,
     9,

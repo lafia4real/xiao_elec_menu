@@ -412,7 +412,7 @@ void tftOnGestureRecognized(const String &label) {
 }
 
 bool tftConsumeDetailEntryEvent() {
-    bool shouldStartServo = g_detailEntryEvent;
+    bool shouldStartAtomizer = g_detailEntryEvent;
     g_detailEntryEvent = false;
-    return shouldStartServo;
+    return shouldStartAtomizer;
 }
