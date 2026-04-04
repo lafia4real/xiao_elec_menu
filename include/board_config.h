@@ -39,8 +39,8 @@ constexpr BoardPins PINS = {
 #elif TARGET_BOARD == BOARD_XIAO_ESP32S3_PLUS
 constexpr BoardPins PINS = {
     1,
-    43,
-    44,
+    3,
+    4,
     8,
     7,
     8,
