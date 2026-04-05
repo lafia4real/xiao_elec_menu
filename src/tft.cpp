@@ -11,8 +11,6 @@ namespace {
 constexpr int MENU_W = 42;
 constexpr int DETAIL_X = MENU_W;
 constexpr int DETAIL_W = SCREEN_W - MENU_W;
-constexpr uint32_t START_SIGNAL_TIMEOUT_MS = 5000;
-
 struct Dish {
     const char *name;
     const char *subtitle;
@@ -27,10 +25,7 @@ enum class AppView {
 const Dish DISHES[] = {
     {"Baozi", "steamed"},
     {"Jiaozi", "dumpling"},
-    {"Noodles", "beef"},
-    {"Mapo", "tofu"},
-    {"Burger", "beef"},
-    {"Pizza", "cheese"}
+    {"Noodles", "beef"}
 };
 constexpr size_t DISH_COUNT = sizeof(DISHES) / sizeof(DISHES[0]);
 
@@ -98,8 +93,6 @@ AppView g_currentView = AppView::Welcome;
 size_t g_currentDishIndex = 0;
 Gesture g_lastGesture = Gesture::None;
 uint32_t g_lastGestureHandledMs = 0;
-uint32_t g_lastStartSignalMs = 0;
-String g_serialBuffer;
 bool g_detailEntryEvent = false;
 
 void fillPixel(int originX, int originY, int gx, int gy, int size, uint16_t color) {
@@ -114,10 +107,6 @@ void drawGlyph5x5(const uint8_t glyph[5], int originX, int originY, int pixelSiz
             }
         }
     }
-}
-
-bool isStartSignalFresh(uint32_t nowMs) {
-    return g_lastStartSignalMs != 0 && (nowMs - g_lastStartSignalMs) <= START_SIGNAL_TIMEOUT_MS;
 }
 
 void drawPixelArtBaozi(int originX, int originY, int s) {
@@ -426,7 +415,7 @@ void renderDetailView() {
     g_tft.setCursor(8, 142);
     g_tft.print("Atomizer running");
     g_tft.setCursor(8, 152);
-    g_tft.print("START keeps menu alive");
+    g_tft.print("Return after finish");
     fillWhiteEdges();
 }
 
@@ -471,25 +460,6 @@ void applyGestureToUi(Gesture gesture) {
     renderCurrentView();
 }
 
-Gesture pollGestureFromSerial() {
-    while (Serial.available() > 0) {
-        char ch = static_cast<char>(Serial.read());
-
-        if (ch == '\r') {
-            continue;
-        }
-        if (ch == '\n') {
-            Gesture gesture = parseGestureLabel(g_serialBuffer);
-            g_serialBuffer = "";
-            return gesture;
-        }
-
-        g_serialBuffer += ch;
-    }
-
-    return Gesture::None;
-}
-
 }  // namespace
 
 void tftSetup() {
@@ -499,22 +469,7 @@ void tftSetup() {
 }
 
 void tftUpdate(uint32_t nowMs) {
-    if (g_currentView == AppView::Menu && !isStartSignalFresh(nowMs)) {
-        Serial.println("START heartbeat lost, back to welcome screen");
-        setView(AppView::Welcome);
-        return;
-    }
-
-    Gesture gesture = pollGestureFromSerial();
-    if (gesture == Gesture::None || g_currentView != AppView::Menu) {
-        return;
-    }
-    if (nowMs - g_lastGestureHandledMs < GESTURE_COOLDOWN_MS) {
-        return;
-    }
-
-    g_lastGestureHandledMs = nowMs;
-    applyGestureToUi(gesture);
+    (void)nowMs;
 }
 
 void tftOnGestureRecognized(const String &label) {
@@ -533,10 +488,10 @@ void tftOnGestureRecognized(const String &label) {
 }
 
 void tftOnStartSignal(uint32_t nowMs) {
-    g_lastStartSignalMs = nowMs;
-
     if (g_currentView == AppView::Welcome) {
-        Serial.println("START received, entering interactive menu");
+        g_currentDishIndex = 0;
+        g_lastGestureHandledMs = nowMs;
+        Serial.println("START received, entering menu 1");
         setView(AppView::Menu);
     }
 }
@@ -546,19 +501,16 @@ void tftOnAtomizerFinished(uint32_t nowMs) {
         return;
     }
 
-    if (isStartSignalFresh(nowMs)) {
-        Serial.println("Atomizer finished, START still active -> back to menu");
-        setView(AppView::Menu);
-    } else {
-        Serial.println("Atomizer finished, START expired -> back to welcome");
-        setView(AppView::Welcome);
-    }
+    g_lastGestureHandledMs = nowMs;
+    Serial.println("Atomizer finished, back to current menu");
+    setView(AppView::Menu);
 }
 
 void tftToggleScreen(uint32_t nowMs) {
     if (g_currentView == AppView::Welcome) {
-        g_lastStartSignalMs = nowMs;
-        Serial.println("UART2 screen toggle: welcome -> menu");
+        g_currentDishIndex = 0;
+        g_lastGestureHandledMs = nowMs;
+        Serial.println("UART2 screen toggle: welcome -> menu 1");
         setView(AppView::Menu);
         return;
     }
@@ -574,7 +526,6 @@ void tftToggleScreen(uint32_t nowMs) {
 }
 
 void tftResetToWelcome() {
-    g_lastStartSignalMs = 0;
     Serial.println("UART2 reset: back to welcome");
     setView(AppView::Welcome);
 }
@@ -588,7 +539,20 @@ bool tftIsDetailView() {
 }
 
 uint8_t tftGetExternalMenuSlot() {
-    return static_cast<uint8_t>(g_currentDishIndex % 3) + 1;
+    return static_cast<uint8_t>(g_currentDishIndex) + 1;
+}
+
+String tftGetExternalScreenCommand() {
+    if (g_currentView == AppView::Welcome) {
+        return "111";
+    }
+
+    uint8_t slot = tftGetExternalMenuSlot();
+    if (g_currentView == AppView::Detail) {
+        return String(slot) + String(slot);
+    }
+
+    return String(slot);
 }
 
 bool tftConsumeDetailEntryEvent() {

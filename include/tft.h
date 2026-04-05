@@ -20,6 +20,7 @@ void tftResetToWelcome();
 bool tftIsWelcomeView();
 bool tftIsDetailView();
 uint8_t tftGetExternalMenuSlot();
+String tftGetExternalScreenCommand();
 bool tftConsumeDetailEntryEvent();
 
 #endif
