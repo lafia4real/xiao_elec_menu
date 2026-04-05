@@ -59,8 +59,8 @@ constexpr BoardPins PINS = {
     7,
     8,
     9,
-    44,
-    43,
+    46,
+    45,
     "JLC ESP32S3R8N8 Dev Board"
 };
 #else
