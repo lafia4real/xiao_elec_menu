@@ -4,11 +4,12 @@
 #include <Arduino.h>
 
 // Board selection:
-// Keep this set to BOARD_XIAO_ESP32S3_SENSE for the current board.
-// Switch to BOARD_XIAO_ESP32S3_PLUS later and only update the pin map below.
+// Switch TARGET_BOARD to match the active hardware and keep the rest of the
+// app logic unchanged.
 #define BOARD_XIAO_ESP32S3_SENSE 1
 #define BOARD_XIAO_ESP32S3_PLUS  2
-#define TARGET_BOARD BOARD_XIAO_ESP32S3_PLUS
+#define BOARD_JLC_ESP32S3R8N8    3
+#define TARGET_BOARD BOARD_JLC_ESP32S3R8N8
 
 struct BoardPins {
     int servoPin;
@@ -48,6 +49,19 @@ constexpr BoardPins PINS = {
     44,
     43,
     "XIAO ESP32S3 Plus"
+};
+#elif TARGET_BOARD == BOARD_JLC_ESP32S3R8N8
+constexpr BoardPins PINS = {
+    1,
+    3,
+    4,
+    8,
+    7,
+    8,
+    9,
+    44,
+    43,
+    "JLC ESP32S3R8N8 Dev Board"
 };
 #else
 #error "Unsupported TARGET_BOARD value"
