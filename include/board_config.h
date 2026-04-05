@@ -21,6 +21,8 @@ struct BoardPins {
     int tftMosiPin;
     int uartRxPin;
     int uartTxPin;
+    int uart2RxPin;
+    int uart2TxPin;
     const char *boardName;
 };
 
@@ -35,6 +37,8 @@ constexpr BoardPins PINS = {
     9,
     44,
     43,
+    18,
+    17,
     "XIAO ESP32S3 Sense"
 };
 #elif TARGET_BOARD == BOARD_XIAO_ESP32S3_PLUS
@@ -48,6 +52,8 @@ constexpr BoardPins PINS = {
     9,
     44,
     43,
+    18,
+    17,
     "XIAO ESP32S3 Plus"
 };
 #elif TARGET_BOARD == BOARD_JLC_ESP32S3R8N8
@@ -61,6 +67,8 @@ constexpr BoardPins PINS = {
     9,
     46,
     45,
+    18,
+    17,
     "JLC ESP32S3R8N8 Dev Board"
 };
 #else

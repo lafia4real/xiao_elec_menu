@@ -83,3 +83,7 @@ void servoUpdate(uint32_t nowMs) {
             break;
     }
 }
+
+bool servoIsBusy() {
+    return g_atomizerPhase != AtomizerPhase::Idle;
+}

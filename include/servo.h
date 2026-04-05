@@ -6,5 +6,6 @@
 void servoSetup();
 void servoUpdate(uint32_t nowMs);
 void servoStartSequence(uint32_t nowMs);
+bool servoIsBusy();
 
 #endif
