@@ -16,23 +16,51 @@ void dispatchGestureLabel(const String &label) {
     tftOnGestureRecognized(label);
 }
 
-void handleScreenCommand(const String &rawCmd) {
+bool isExternalScreenCommand(const String &cmd) {
+    return cmd == "1" || cmd == "2" || cmd == "3" ||
+           cmd == "11" || cmd == "22" || cmd == "33" ||
+           cmd == "111";
+}
+
+void sendScreenCommand(const String &rawCmd) {
     String cmd = normalizeCommand(rawCmd);
 
     if (cmd.length() == 0) {
         return;
     }
 
-    if (cmd == "1") {
-        Serial.println("[ACTION] SCREEN 1 -> send to UART2");
-        Serial2.print("1\n");
-    } else if (cmd == "2") {
-        Serial.println("[ACTION] SCREEN 2 -> send to UART2");
-        Serial2.print("2\n");
+    if (isExternalScreenCommand(cmd)) {
+        Serial.print("[ACTION] SCREEN -> send to external display: ");
+        Serial.println(cmd);
+        Serial2.print(cmd);
+        Serial2.print('\n');
     } else {
         Serial.print("[WARN] Unknown screen command: ");
         Serial.println(cmd);
     }
+}
+
+void syncExternalScreenState() {
+    static String lastSentScreen;
+    String desiredScreen;
+
+    if (tftIsWelcomeView()) {
+        desiredScreen = "111";
+    } else {
+        uint8_t slot = tftGetExternalMenuSlot();
+        if (tftIsDetailView()) {
+            desiredScreen = String(slot) + String(slot);
+        } else {
+            desiredScreen = String(slot);
+        }
+    }
+
+    if (desiredScreen == lastSentScreen) {
+        return;
+    }
+
+    sendScreenCommand(desiredScreen);
+    lastSentScreen = desiredScreen;
 }
 
 void handleUartCommand(const String &rawCmd) {
@@ -103,10 +131,10 @@ void pollUsbScreenCommands() {
     String cmd = Serial.readStringUntil('\n');
     cmd.trim();
 
-    if (cmd == "1" || cmd == "2") {
+    if (isExternalScreenCommand(cmd)) {
         Serial.print("[USB SCREEN RECV] ");
         Serial.println(cmd);
-        handleScreenCommand(cmd);
+        sendScreenCommand(cmd);
     }
 }
 
@@ -121,7 +149,7 @@ void setup() {
     Serial.print("Target board: ");
     Serial.println(PINS.boardName);
     Serial.println("Type rock / paper / scissors in Serial Monitor to test.");
-    Serial.println("Type 1 / 2 in Serial Monitor to test screen switching.");
+    Serial.println("Type 1/2/3/11/22/33/111 in Serial Monitor to test the external display.");
     Serial.print("UART1 ready on RX=");
     Serial.print(PINS.uartRxPin);
     Serial.print(", TX=");
@@ -131,10 +159,11 @@ void setup() {
     Serial.print(PINS.uart2RxPin);
     Serial.print(", TX=");
     Serial.println(PINS.uart2TxPin);
-    Serial.println("Send 1 / 2 on UART2 to switch or reset the TFT screen.");
+    Serial.println("Send 1/2/3/11/22/33/111 on UART2 for the external display.");
 
     servoSetup();
     tftSetup();
+    syncExternalScreenState();
 }
 
 void loop() {
@@ -157,4 +186,6 @@ void loop() {
         servoStartSequence(nowMs);
         wasAtomizerBusy = true;
     }
+
+    syncExternalScreenState();
 }

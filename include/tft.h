@@ -17,6 +17,9 @@ void tftOnStartSignal(uint32_t nowMs);
 void tftOnAtomizerFinished(uint32_t nowMs);
 void tftToggleScreen(uint32_t nowMs);
 void tftResetToWelcome();
+bool tftIsWelcomeView();
+bool tftIsDetailView();
+uint8_t tftGetExternalMenuSlot();
 bool tftConsumeDetailEntryEvent();
 
 #endif

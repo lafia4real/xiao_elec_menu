@@ -579,6 +579,18 @@ void tftResetToWelcome() {
     setView(AppView::Welcome);
 }
 
+bool tftIsWelcomeView() {
+    return g_currentView == AppView::Welcome;
+}
+
+bool tftIsDetailView() {
+    return g_currentView == AppView::Detail;
+}
+
+uint8_t tftGetExternalMenuSlot() {
+    return static_cast<uint8_t>(g_currentDishIndex % 3) + 1;
+}
+
 bool tftConsumeDetailEntryEvent() {
     bool shouldStartAtomizer = g_detailEntryEvent;
     g_detailEntryEvent = false;
