@@ -20,7 +20,7 @@ bool isScreenControlCommand(const String &cmd) {
     return cmd == "HELLO" || cmd == "LEFT" || cmd == "RIGHT" || cmd == "OK" || cmd == "BACK";
 }
 
-void sendScreenCommand(const String &rawCmd) {
+void sendScreenCommand(const String &rawCmd, const char *source = "LOCAL") {
     String cmd = normalizeCommand(rawCmd);
 
     if (cmd.length() == 0) {
@@ -28,7 +28,9 @@ void sendScreenCommand(const String &rawCmd) {
     }
 
     if (isScreenControlCommand(cmd)) {
-        Serial.print("[ACTION] SCREEN -> send to external display: ");
+        Serial.print("[");
+        Serial.print(source);
+        Serial.print(" -> UART2] ");
         Serial.println(cmd);
         Serial2.print(cmd);
         Serial2.print('\n');
@@ -53,7 +55,6 @@ void handleUartCommand(const String &rawCmd) {
         if (tftIsWelcomeView()) {
             Serial.println("[ACTION] HELLO -> enter menu");
             tftOnHelloSignal(nowMs);
-            sendScreenCommand("HELLO");
         } else {
             Serial.println("[ACTION] HELLO ignored outside init view");
         }
@@ -61,7 +62,6 @@ void handleUartCommand(const String &rawCmd) {
         if (!tftIsWelcomeView() && !tftIsDetailView()) {
             Serial.println("[ACTION] LEFT -> menu move left");
             dispatchGestureLabel("rock");
-            sendScreenCommand("LEFT");
         } else {
             Serial.println("[ACTION] LEFT ignored outside menu view");
         }
@@ -69,7 +69,6 @@ void handleUartCommand(const String &rawCmd) {
         if (!tftIsWelcomeView() && !tftIsDetailView()) {
             Serial.println("[ACTION] RIGHT -> menu move right");
             dispatchGestureLabel("paper");
-            sendScreenCommand("RIGHT");
         } else {
             Serial.println("[ACTION] RIGHT ignored outside menu view");
         }
@@ -77,19 +76,16 @@ void handleUartCommand(const String &rawCmd) {
         if (tftIsDetailView()) {
             Serial.println("[ACTION] OK -> detail heartbeat");
             tftOnOkSignal(nowMs);
-            sendScreenCommand("OK");
         } else if (!tftIsWelcomeView()) {
             Serial.println("[ACTION] OK -> open detail");
             dispatchGestureLabel("scissors");
             tftOnOkSignal(nowMs);
-            sendScreenCommand("OK");
         } else {
             Serial.println("[ACTION] OK ignored outside menu view");
         }
     } else if (cmd == "BACK") {
         Serial.println("[ACTION] BACK -> enter back flow");
         tftOnBackSignal(nowMs);
-        sendScreenCommand("BACK");
     } else {
         Serial.print("[WARN] Unknown UART1 command: ");
         Serial.println(cmd);
@@ -114,6 +110,11 @@ void pollUart1() {
 
     String cmd = Serial1.readStringUntil('\n');
     cmd.trim();
+    cmd.toUpperCase();
+    if (cmd.length() == 0) {
+        return;
+    }
+    sendScreenCommand(cmd, "UART1");
     handleUartCommand(cmd);
 }
 
@@ -206,6 +207,6 @@ void loop() {
 
     if (tftConsumeBackEvent()) {
         Serial.println("[ACTION] BACK -> send to external display");
-        sendScreenCommand("BACK");
+        sendScreenCommand("BACK", "AUTO");
     }
 }
