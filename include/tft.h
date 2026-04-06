@@ -13,7 +13,9 @@ enum class Gesture {
 void tftSetup();
 void tftUpdate(uint32_t nowMs);
 void tftOnGestureRecognized(const String &label);
-void tftOnStartSignal(uint32_t nowMs);
+void tftOnHelloSignal(uint32_t nowMs);
+void tftOnOkSignal(uint32_t nowMs);
+void tftOnBackSignal(uint32_t nowMs);
 void tftOnAtomizerFinished(uint32_t nowMs);
 void tftToggleScreen(uint32_t nowMs);
 void tftResetToWelcome();
@@ -21,6 +23,7 @@ bool tftIsWelcomeView();
 bool tftIsDetailView();
 uint8_t tftGetExternalMenuSlot();
 String tftGetExternalScreenCommand();
+bool tftConsumeBackEvent();
 bool tftConsumeDetailEntryEvent();
 
 #endif

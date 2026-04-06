@@ -11,6 +11,7 @@ namespace {
 constexpr int MENU_W = 42;
 constexpr int DETAIL_X = MENU_W;
 constexpr int DETAIL_W = SCREEN_W - MENU_W;
+constexpr uint32_t DETAIL_OK_TIMEOUT_MS = 2000;
 struct Dish {
     const char *name;
     const char *subtitle;
@@ -93,6 +94,9 @@ AppView g_currentView = AppView::Welcome;
 size_t g_currentDishIndex = 0;
 Gesture g_lastGesture = Gesture::None;
 uint32_t g_lastGestureHandledMs = 0;
+uint32_t g_lastOkSignalMs = 0;
+bool g_detailExitArmed = false;
+bool g_backEvent = false;
 bool g_detailEntryEvent = false;
 
 void fillPixel(int originX, int originY, int gx, int gy, int size, uint16_t color) {
@@ -345,13 +349,13 @@ void renderWelcomeView() {
     g_tft.fillRoundRect(14, 78, 100, 28, 6, ST77XX_BLACK);
     g_tft.setTextColor(ST77XX_WHITE);
     g_tft.setTextSize(2);
-    g_tft.setCursor(24, 86);
-    g_tft.print("START");
+    g_tft.setCursor(22, 86);
+    g_tft.print("HELLO");
 
     g_tft.setTextColor(ST77XX_BLACK);
     g_tft.setTextSize(1);
     g_tft.setCursor(19, 122);
-    g_tft.print("Send START on UART1");
+    g_tft.print("Send HELLO on UART1");
     g_tft.setCursor(18, 138);
     g_tft.print("to open the menu");
     fillWhiteEdges();
@@ -454,6 +458,9 @@ void applyGestureToUi(Gesture gesture) {
         g_currentDishIndex = (g_currentDishIndex + 1) % DISH_COUNT;
     } else if (gesture == Gesture::Scissors) {
         g_currentView = AppView::Detail;
+        g_lastOkSignalMs = 0;
+        g_detailExitArmed = false;
+        Serial.println("Detail opened, waiting for atomizer to finish");
         g_detailEntryEvent = true;
     }
 
@@ -469,7 +476,17 @@ void tftSetup() {
 }
 
 void tftUpdate(uint32_t nowMs) {
-    (void)nowMs;
+    if (g_currentView == AppView::Detail &&
+        g_detailExitArmed &&
+        g_lastOkSignalMs != 0 &&
+        nowMs - g_lastOkSignalMs >= DETAIL_OK_TIMEOUT_MS) {
+        g_lastGestureHandledMs = nowMs;
+        g_lastOkSignalMs = 0;
+        g_detailExitArmed = false;
+        g_backEvent = true;
+        Serial.println("OK timeout after atomizer finish, back to current menu");
+        setView(AppView::Menu);
+    }
 }
 
 void tftOnGestureRecognized(const String &label) {
@@ -487,12 +504,43 @@ void tftOnGestureRecognized(const String &label) {
     applyGestureToUi(gesture);
 }
 
-void tftOnStartSignal(uint32_t nowMs) {
+void tftOnHelloSignal(uint32_t nowMs) {
     if (g_currentView == AppView::Welcome) {
         g_currentDishIndex = 0;
         g_lastGestureHandledMs = nowMs;
-        Serial.println("START received, entering menu 1");
+        g_lastOkSignalMs = 0;
+        g_detailExitArmed = false;
+        Serial.println("HELLO received, entering menu 1");
         setView(AppView::Menu);
+    }
+}
+
+void tftOnOkSignal(uint32_t nowMs) {
+    if (g_currentView == AppView::Detail) {
+        g_lastOkSignalMs = nowMs;
+        if (g_detailExitArmed) {
+            Serial.println("OK received after atomizer finish, keep detail alive");
+        } else {
+            Serial.println("OK received while atomizer is still running");
+        }
+    }
+}
+
+void tftOnBackSignal(uint32_t nowMs) {
+    if (g_currentView == AppView::Detail) {
+        g_lastGestureHandledMs = nowMs;
+        g_lastOkSignalMs = 0;
+        g_detailExitArmed = false;
+        g_backEvent = false;
+        Serial.println("BACK received, returning to current menu");
+        setView(AppView::Menu);
+    } else if (g_currentView == AppView::Menu) {
+        g_lastGestureHandledMs = nowMs;
+        g_backEvent = false;
+        Serial.println("BACK received in menu, returning to init");
+        setView(AppView::Welcome);
+    } else {
+        Serial.println("BACK ignored in init view");
     }
 }
 
@@ -502,8 +550,9 @@ void tftOnAtomizerFinished(uint32_t nowMs) {
     }
 
     g_lastGestureHandledMs = nowMs;
-    Serial.println("Atomizer finished, back to current menu");
-    setView(AppView::Menu);
+    g_lastOkSignalMs = nowMs;
+    g_detailExitArmed = true;
+    Serial.println("Atomizer finished, waiting 2s for next OK before returning to menu");
 }
 
 void tftToggleScreen(uint32_t nowMs) {
@@ -526,6 +575,12 @@ void tftToggleScreen(uint32_t nowMs) {
 }
 
 void tftResetToWelcome() {
+    g_currentDishIndex = 0;
+    g_lastGestureHandledMs = 0;
+    g_lastOkSignalMs = 0;
+    g_detailExitArmed = false;
+    g_backEvent = false;
+    g_detailEntryEvent = false;
     Serial.println("UART2 reset: back to welcome");
     setView(AppView::Welcome);
 }
@@ -553,6 +608,12 @@ String tftGetExternalScreenCommand() {
     }
 
     return String(slot);
+}
+
+bool tftConsumeBackEvent() {
+    bool shouldSendBack = g_backEvent;
+    g_backEvent = false;
+    return shouldSendBack;
 }
 
 bool tftConsumeDetailEntryEvent() {

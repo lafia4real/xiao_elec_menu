@@ -17,7 +17,7 @@ void dispatchGestureLabel(const String &label) {
 }
 
 bool isScreenControlCommand(const String &cmd) {
-    return cmd == "START" || cmd == "LEFT" || cmd == "RIGHT" || cmd == "OK";
+    return cmd == "HELLO" || cmd == "LEFT" || cmd == "RIGHT" || cmd == "OK" || cmd == "BACK";
 }
 
 void sendScreenCommand(const String &rawCmd) {
@@ -49,13 +49,13 @@ void handleUartCommand(const String &rawCmd) {
     Serial.print("[UART1 RECV] ");
     Serial.println(cmd);
 
-    if (cmd == "START") {
+    if (cmd == "HELLO") {
         if (tftIsWelcomeView()) {
-            Serial.println("[ACTION] START -> enter menu");
-            tftOnStartSignal(nowMs);
-            sendScreenCommand("START");
+            Serial.println("[ACTION] HELLO -> enter menu");
+            tftOnHelloSignal(nowMs);
+            sendScreenCommand("HELLO");
         } else {
-            Serial.println("[ACTION] START ignored outside init view");
+            Serial.println("[ACTION] HELLO ignored outside init view");
         }
     } else if (cmd == "LEFT") {
         if (!tftIsWelcomeView() && !tftIsDetailView()) {
@@ -74,13 +74,22 @@ void handleUartCommand(const String &rawCmd) {
             Serial.println("[ACTION] RIGHT ignored outside menu view");
         }
     } else if (cmd == "OK") {
-        if (!tftIsWelcomeView() && !tftIsDetailView()) {
+        if (tftIsDetailView()) {
+            Serial.println("[ACTION] OK -> detail heartbeat");
+            tftOnOkSignal(nowMs);
+            sendScreenCommand("OK");
+        } else if (!tftIsWelcomeView()) {
             Serial.println("[ACTION] OK -> open detail");
             dispatchGestureLabel("scissors");
+            tftOnOkSignal(nowMs);
             sendScreenCommand("OK");
         } else {
             Serial.println("[ACTION] OK ignored outside menu view");
         }
+    } else if (cmd == "BACK") {
+        Serial.println("[ACTION] BACK -> enter back flow");
+        tftOnBackSignal(nowMs);
+        sendScreenCommand("BACK");
     } else {
         Serial.print("[WARN] Unknown UART1 command: ");
         Serial.println(cmd);
@@ -135,7 +144,7 @@ void pollUsbCommands() {
     Serial.print("[USB RAW] ");
     Serial.println(cmd);
 
-    if (cmd == "START" || cmd == "LEFT" || cmd == "RIGHT" || cmd == "OK") {
+    if (cmd == "HELLO" || cmd == "LEFT" || cmd == "RIGHT" || cmd == "OK" || cmd == "BACK") {
         handleUartCommand(cmd);
     } else if (cmd == "ROCK" || cmd == "PAPER" || cmd == "SCISSORS") {
         dispatchGestureLabel(cmd);
@@ -155,21 +164,23 @@ void setup() {
     Serial.println("Gesture order menu start");
     Serial.print("Target board: ");
     Serial.println(PINS.boardName);
-    Serial.println("USB Serial supports START / LEFT / RIGHT / OK.");
-    Serial.println("USB Serial can also forward START / LEFT / RIGHT / OK to the external display.");
+    Serial.println("USB Serial supports HELLO / LEFT / RIGHT / OK / BACK.");
+    Serial.println("USB Serial can also forward HELLO / LEFT / RIGHT / OK / BACK to the external display.");
     Serial.print("UART1 ready on RX=");
     Serial.print(PINS.uartRxPin);
     Serial.print(", TX=");
     Serial.println(PINS.uartTxPin);
-    Serial.println("Send START / LEFT / RIGHT / OK on UART1.");
+    Serial.println("Send HELLO / LEFT / RIGHT / OK on UART1.");
     Serial.print("UART2 ready on RX=");
     Serial.print(PINS.uart2RxPin);
     Serial.print(", TX=");
     Serial.println(PINS.uart2TxPin);
-    Serial.println("Send START / LEFT / RIGHT / OK on UART2 for the external display.");
+    Serial.println("Send HELLO / LEFT / RIGHT / OK / BACK on UART2 for the external display.");
 
     servoSetup();
     tftSetup();
+    tftResetToWelcome();
+    Serial.println("UI reset to init screen on boot");
 }
 
 void loop() {
@@ -191,5 +202,10 @@ void loop() {
     if (tftConsumeDetailEntryEvent()) {
         servoStartSequence(nowMs);
         wasAtomizerBusy = true;
+    }
+
+    if (tftConsumeBackEvent()) {
+        Serial.println("[ACTION] BACK -> send to external display");
+        sendScreenCommand("BACK");
     }
 }
